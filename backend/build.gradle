@@ -1,0 +1,185 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.3.3'
+    id 'io.spring.dependency-management' version '1.1.6'
+    id 'jacoco' // optional: coverage reports
+    id 'org.sonarqube' version '4.4.1.3373'
+}
+
+group = 'com.superdoc'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    withSourcesJar()
+}
+
+repositories { mavenCentral() }
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    // Method-level security for @PreAuthorize
+    implementation 'org.springframework.security:spring-security-config'
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+    implementation 'com.sendgrid:sendgrid-java:4.10.2'
+    implementation 'com.theokanning.openai-gpt3-java:service:0.18.2'
+
+    implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
+    runtimeOnly   'io.jsonwebtoken:jjwt-impl:0.11.5'
+    runtimeOnly   'io.jsonwebtoken:jjwt-jackson:0.11.5'
+
+    runtimeOnly 'org.postgresql:postgresql'
+    // H2 for in-memory testing
+    testImplementation 'com.h2database:h2'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
+    // --- TEST DEPS ---
+    testImplementation('org.springframework.boot:spring-boot-starter-test') {
+        // force JUnit 5 engine (avoid JUnit 4 Vintage picking up)
+        exclude group: 'org.junit.vintage', module: 'junit-vintage-engine'
+    }
+    // Spring Security Test support for MockMvc
+    testImplementation 'org.springframework.security:spring-security-test'
+    // mock final classes / static methods if needed
+    testImplementation 'org.mockito:mockito-inline:5.2.0'
+
+    // (Usually not required because Boot brings these, but harmless to be explicit)
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly   'org.junit.platform:junit-platform-launcher:1.10.2'
+
+    // Integration testing 
+    testImplementation 'org.testcontainers:junit-jupiter:1.19.8'
+    testImplementation 'org.testcontainers:postgresql:1.19.8'
+}
+
+tasks.test {
+    useJUnitPlatform()
+    // Exclude integration tests by default (they are run separately in CI)
+    exclude "**/integration/**"
+    testLogging {
+        events "passed", "skipped", "failed"
+        exceptionFormat "full"
+        showStandardStreams = false
+    }
+}
+
+// Task to run only integration tests
+tasks.register('testIntegration', Test) {
+    useJUnitPlatform()
+    // Include only integration tests
+    include "**/integration/**"
+    testLogging {
+        events "passed", "skipped", "failed"
+        exceptionFormat "full"
+        showStandardStreams = false
+    }
+}
+
+// Task to run all tests including integration tests (for SonarQube coverage)
+tasks.register('testAll', Test) {
+    useJUnitPlatform()
+    // Include all tests (no exclusions)
+    testLogging {
+        events "passed", "skipped", "failed"
+        exceptionFormat "full"
+        showStandardStreams = false
+    }
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+// Jacoco report for all tests (including integration)
+tasks.register('jacocoTestReportAll', org.gradle.testing.jacoco.tasks.JacocoReport) {
+    dependsOn testAll
+    reports {
+        xml.required = true
+        xml.outputLocation = layout.buildDirectory.file("reports/jacoco/testAll/jacocoTestReportAll.xml")
+        html.required = true
+        html.outputLocation = layout.buildDirectory.dir("reports/jacoco/testAll/html")
+    }
+    // Collect execution data from testAll task (which includes both unit and integration tests)
+    // testAll runs all tests, so it generates execution data for everything
+    executionData testAll
+    sourceSets sourceSets.main
+}
+
+sonarqube {
+    properties {
+        // SonarCloud configuration
+        // Set SONAR_ORGANIZATION and SONAR_PROJECT_KEY in CI/CD variables
+        // Format: sonar.organization=your-org-key
+        // Format: sonar.projectKey=your-org-key_superdoc-backend
+        def organization = System.getenv("SONAR_ORGANIZATION") ?: System.getProperty("sonar.organization", "")
+        def projectKey = System.getenv("SONAR_PROJECT_KEY") ?: System.getProperty("sonar.projectKey", "superdoc-backend")
+        def token = System.getenv("SONAR_TOKEN") ?: System.getProperty("sonar.token", "")
+        def hostUrl = System.getenv("SONAR_HOST_URL") ?: System.getProperty("sonar.host.url", "https://sonarcloud.io")
+        
+        property "sonar.projectKey", projectKey
+        property "sonar.projectName", "SuperDoc Backend"
+        property "sonar.host.url", hostUrl
+        
+        // Coverage report path - use jacocoTestReportAll which includes both unit and integration tests
+        property "sonar.coverage.jacoco.xmlReportPaths", "build/reports/jacoco/testAll/jacocoTestReportAll.xml"
+        property "sonar.junit.reportPaths", "build/test-results/test"
+        
+        // Only require organization if using SonarCloud with token
+        if (token && hostUrl.contains("sonarcloud.io")) {
+            if (!organization) {
+                throw new GradleException("""
+                    SONAR_ORGANIZATION is required when using SonarCloud.
+                    
+                    Set these environment variables:
+                      export SONAR_ORGANIZATION="your-org-key"
+                      export SONAR_PROJECT_KEY="your-org-key_superdoc-backend"
+                      export SONAR_TOKEN="your-sonar-token"
+                    
+                    Or use system properties:
+                      ./gradlew sonar -Dsonar.organization=your-org-key -Dsonar.token=your-token
+                    
+                    To view coverage locally without SonarCloud:
+                      ./gradlew test jacocoTestReport
+                      open build/reports/jacoco/test/html/index.html
+                """.stripIndent())
+            }
+            property "sonar.organization", organization
+            property "sonar.token", token
+        } else if (token) {
+            // Local SonarQube server
+            property "sonar.token", token
+            if (organization) {
+                property "sonar.organization", organization
+            }
+        } else {
+            // No token provided - skip SonarQube upload
+            throw new GradleException("""
+                SonarQube analysis requires authentication.
+                
+                To upload to SonarCloud, set these environment variables:
+                  export SONAR_ORGANIZATION="your-org-key"
+                  export SONAR_PROJECT_KEY="your-org-key_superdoc-backend"
+                  export SONAR_TOKEN="your-sonar-token"
+                
+                Then run: ./gradlew sonar
+                
+                To view coverage locally (no SonarCloud needed):
+                  ./gradlew test jacocoTestReport
+                  open build/reports/jacoco/test/html/index.html
+            """.stripIndent())
+        }
+    }
+}

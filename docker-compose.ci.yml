@@ -1,0 +1,65 @@
+services:
+  db:
+    image: postgres:15-alpine
+    # No container_name - let Docker Compose auto-generate with project prefix
+    environment:
+      POSTGRES_DB: superdocdb
+      POSTGRES_USER: superdoc
+      POSTGRES_PASSWORD: superdoc_pw
+    ports:
+      - "5433:5432"  
+    volumes:
+      - postgres_data_ci:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superdoc"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - superdoc-ci-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    # No container_name - let Docker Compose auto-generate with project prefix
+    ports:
+      - "8080:8080"
+    environment:
+      # Database connection 
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/superdocdb
+      SPRING_DATASOURCE_USERNAME: superdoc
+      SPRING_DATASOURCE_PASSWORD: superdoc_pw
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_FLYWAY_ENABLED: false
+      
+      # App configuration
+      APP_PUBLIC_URL: http://localhost:3000
+      
+      # JWT Secret 
+      JWT_SECRET: ${JWT_SECRET:-REPLACE_WITH_64_CHAR_SECRET_SUPERDOC_2025_change_me_change_me_change}
+      
+      # Mail configuration
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@superdoc.local}
+    volumes:
+      # Mount uploads directory (temporary for CI)
+      - backend_uploads_ci:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - superdoc-ci-network
+    restart: unless-stopped
+
+networks:
+  superdoc-ci-network:
+    driver: bridge
+
+volumes:
+  postgres_data_ci:
+    driver: local
+  backend_uploads_ci:
+    driver: local

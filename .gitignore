@@ -1,0 +1,20 @@
+# macOS / IDE
+.DS_Store
+.idea/
+*.iml
+
+# Node / React
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Gradle / Java
+**/.gradle/
+**/build/
+backend/target/
+*.log
+bootRun*.log
+
+# Documentation
+PROJECT_EXPLANATION.md
